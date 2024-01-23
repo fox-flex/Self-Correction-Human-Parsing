@@ -12,6 +12,8 @@
 """
 
 import os
+
+import cv2
 import torch
 import argparse
 import numpy as np
@@ -20,6 +22,7 @@ from tqdm import tqdm
 
 from torch.utils.data import DataLoader
 import torchvision.transforms as transforms
+import torchgeometry as tgm
 
 import networks
 from utils.transforms import transform_logits
@@ -110,7 +113,8 @@ def main():
         name = k[7:]  # remove `module.`
         new_state_dict[name] = v
     model.load_state_dict(new_state_dict)
-    model.cuda()
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    model.to(device)
     model.eval()
 
     transform = transforms.Compose([
@@ -133,16 +137,22 @@ def main():
             w = meta['width'].numpy()[0]
             h = meta['height'].numpy()[0]
 
-            output = model(image.cuda())
+            output = model(image.to(device))
             upsample = torch.nn.Upsample(size=input_size, mode='bilinear', align_corners=True)
             upsample_output = upsample(output[0][-1][0].unsqueeze(0))
             upsample_output = upsample_output.squeeze()
             upsample_output = upsample_output.permute(1, 2, 0)  # CHW -> HWC
 
             logits_result = transform_logits(upsample_output.data.cpu().numpy(), c, s, w, h, input_size=input_size)
+            # gauss = tgm.image.GaussianBlur((15, 15), (3, 3))
+            # logits_result = logits_result.transpose(2, 0, 1)  # CHW -> HWC
+            # logits_result = gauss(torch.from_numpy(logits_result).unsqueeze(0)).numpy()[0]
+            # logits_result = logits_result.transpose(1, 2, 0)  # CHW -> HWC
             parsing_result = np.argmax(logits_result, axis=2)
             parsing_result_path = os.path.join(args.output_dir, img_name[:-4] + '.png')
-            output_img = Image.fromarray(np.asarray(parsing_result, dtype=np.uint8))
+
+            output_img = np.asarray(parsing_result, dtype=np.uint8)
+            output_img = Image.fromarray(output_img)
             output_img.putpalette(palette)
             output_img.save(parsing_result_path)
             if args.logits:
